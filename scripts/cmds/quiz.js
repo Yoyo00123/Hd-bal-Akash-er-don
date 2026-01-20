@@ -1,159 +1,124 @@
 const axios = require("axios");
-const fs = require("fs-extra");
-const path = __dirname + "/coinxbalance.json";
 
-// ✅ Create file if not exists
-if (!fs.existsSync(path)) {
-  fs.writeFileSync(path, JSON.stringify({}, null, 2));
-}
+// 🔹 SAME API as slot.js
+const API_URL = "https://balance-bot-api.onrender.com";
 
 // 🔹 Get balance
-function getBalance(userID) {
+async function getBalance(userID) {
   try {
-    const data = JSON.parse(fs.readFileSync(path, "utf-8"));
-    if (data[userID]?.balance !== undefined) return data[userID].balance;
-    return userID === "100078049308655" ? 10000 : 100;
+    const res = await axios.get(`${API_URL}/api/balance/${userID}`);
+    return res.data.balance || 100;
   } catch {
     return 100;
   }
 }
 
-// 🔹 Set balance
-function setBalance(userID, balance) {
+// 🔹 Add balance
+async function winGame(userID, amount) {
   try {
-    const data = JSON.parse(fs.readFileSync(path, "utf-8"));
-    data[userID] = { balance: Math.max(0, balance) };
-    fs.writeFileSync(path, JSON.stringify(data, null, 2));
-  } catch {}
+    const res = await axios.post(`${API_URL}/api/balance/win`, { userID, amount });
+    return res.data.success ? res.data.balance : null;
+  } catch {
+    return null;
+  }
+}
+
+// 🔹 Lose balance
+async function loseGame(userID, amount) {
+  try {
+    const res = await axios.post(`${API_URL}/api/balance/lose`, { userID, amount });
+    return res.data.success ? res.data.balance : null;
+  } catch {
+    return null;
+  }
 }
 
 // 🔹 Format balance
 function formatBalance(num) {
-  if (num >= 1e12) return (num / 1e12).toFixed(2).replace(/\.00$/, "") + "T$";
-  if (num >= 1e9) return (num / 1e9).toFixed(2).replace(/\.00$/, "") + "B$";
-  if (num >= 1e6) return (num / 1e6).toFixed(2).replace(/\.00$/, "") + "M$";
-  if (num >= 1e3) return (num / 1e3).toFixed(2).replace(/\.00$/, "") + "k$";
-  return num + "$";
+  return num.toLocaleString("en-US") + " $";
 }
 
 module.exports = {
   config: {
     name: "quiz",
-    version: "6.2",
-    author: "Mᴏʜᴀᴍᴍᴀᴅ Aᴋᴀsʜ",
-    countDown: 5,
+    version: "1.0",
+    author: "MOHAMMAD AKASH",
     role: 0,
-    shortDescription: "✦ Bᴀɴɢʟᴀ Qᴜɪᴢ ✦ Cᴏɪɴ Gᴀᴍᴇ 🎯",
     category: "game",
-    guide: { en: "{p}quiz | {p}quiz h" }
+    shortDescription: "Quiz Game (Reply Based)"
   },
 
-  onStart: async function ({ api, event, args }) {
-    const { threadID, senderID, messageID } = event;
-    const balance = getBalance(senderID);
+  onStart: async function ({ api, event }) {
+    const { threadID, senderID } = event;
 
-    // 🧠 Help
-    if (args[0]?.toLowerCase() === "h" || args[0] === "help") {
+    const balance = await getBalance(senderID);
+    if (balance < 50) {
       return api.sendMessage(
-`🧠 Qᴜɪᴢ Gᴜɪᴅᴇ 🎯
-━━━━━━━━━━━━━━━
-✅ Cᴏʀʀᴇᴄᴛ: +1,000 Cᴏɪɴs
-❌ Wʀᴏɴɢ: −50 Cᴏɪɴs
-💰 Mɪɴɪᴍᴜᴍ Bᴀʟᴀɴᴄᴇ: 30
-━━━━━━━━━━━━━━━
-🎮 Exᴀᴍᴘʟᴇ: !quiz`,
-        threadID,
-        messageID
-      );
-    }
-
-    // 💰 Low balance
-    if (balance < 30) {
-      return api.sendMessage(
-`⚠️ Iɴsᴜғғɪᴄɪᴇɴᴛ Bᴀʟᴀɴᴄᴇ!
-💎 Yᴏᴜʀ Bᴀʟᴀɴᴄᴇ: ${formatBalance(balance)}
-🎮 Mɪɴɪᴍᴜᴍ Rᴇǫᴜɪʀᴇᴅ: 30$`,
-        threadID,
-        messageID
+        `❌ Insufficient Balance!\n💳 Balance: ${formatBalance(balance)}`,
+        threadID
       );
     }
 
     try {
-      const { data } = await axios.get(
-        "https://rubish-apihub.onrender.com/rubish/quiz-api?category=Bangla&apikey=rubish69"
-      );
+      // ✅ FREE QUIZ API (English)
+      const res = await axios.get("https://opentdb.com/api.php?amount=1&type=multiple");
+      const q = res.data.results[0];
 
-      if (!data?.question || !data?.answer) throw new Error("Invalid API");
+      const options = [...q.incorrect_answers, q.correct_answer]
+        .sort(() => Math.random() - 0.5);
+
+      const answerMap = ["A", "B", "C", "D"];
+      const correctIndex = options.indexOf(q.correct_answer);
+      const correctAnswer = answerMap[correctIndex];
 
       const quizMsg =
-`✦ Bᴀɴɢʟᴀ Qᴜɪᴢ ✦
-${data.question}
+`✦ Qᴜɪᴢ Gᴀᴍᴇ ✦
 
-🇦 ${data.A} • 🇧 ${data.B}
-🇨 ${data.C} • 🇩 ${data.D}
+${q.question}
 
-✍️ Rᴇᴘʟʏ: A / B / C / D`;
+🇦 ${options[0]}
+🇧 ${options[1]}
+🇨 ${options[2]}
+🇩 ${options[3]}
+
+✍️ Reply: A / B / C / D`;
 
       api.sendMessage(quizMsg, threadID, (err, info) => {
-        if (err || !info) return;
+        if (err) return;
 
         global.GoatBot.onReply.set(info.messageID, {
           commandName: "quiz",
           author: senderID,
-          answer: data.answer,
+          correctAnswer,
           messageID: info.messageID
         });
       });
 
     } catch {
-      api.sendMessage(
-`❌ Sᴏᴍᴇᴛʜɪɴɢ Wᴇɴᴛ Wʀᴏɴɢ!
-😵 Fᴀɪʟᴇᴅ ᴛᴏ Lᴏᴀᴅ Qᴜɪᴢ.
-Pʟᴇᴀsᴇ Tʀʏ Aɢᴀɪɴ Lᴀᴛᴇʀ.`,
-        threadID,
-        messageID
-      );
+      api.sendMessage("❌ Failed to load quiz. Try again.", threadID);
     }
   },
 
-  // 🔁 Reply handler
   onReply: async function ({ api, event, Reply }) {
     const { senderID, body, threadID } = event;
     if (senderID !== Reply.author) return;
 
     const userAns = body.trim().toUpperCase();
-    if (!["A", "B", "C", "D"].includes(userAns)) {
+    if (!["A", "B", "C", "D"].includes(userAns)) return;
+
+    await api.unsendMessage(Reply.messageID);
+    global.GoatBot.onReply.delete(Reply.messageID);
+
+    if (userAns === Reply.correctAnswer) {
+      const newBal = await winGame(senderID, 300);
       return api.sendMessage(
-`⚠️ Iɴᴠᴀʟɪᴅ Rᴇᴘʟʏ!
-✍️ Tʏᴘᴇ Oɴʟʏ: A / B / C / D
-Exᴀᴍᴘʟᴇ: A`,
-        threadID
-      );
-    }
-
-    let balance = getBalance(senderID);
-
-    if (userAns === Reply.answer) {
-      balance += 1000;
-      setBalance(senderID, balance);
-      await api.unsendMessage(Reply.messageID);
-      global.GoatBot.onReply.delete(Reply.messageID);
-
-      api.sendMessage(
-`✅ Cᴏʀʀᴇᴄᴛ Aɴsᴡᴇʀ!
-🎉 Yᴏᴜ Eᴀʀɴᴇᴅ +1,000 Cᴏɪɴs
-💎 Nᴇᴡ Bᴀʟᴀɴᴄᴇ: ${formatBalance(balance)}`,
+        `✅ Correct Answer!\n🎉 You earned 300 $\n💳 New Balance: ${formatBalance(newBal)}`,
         threadID
       );
     } else {
-      balance = Math.max(0, balance - 50);
-      setBalance(senderID, balance);
-
-      api.sendMessage(
-`❌ Wʀᴏɴɢ Aɴsᴡᴇʀ!
-😔 −50 Cᴏɪɴs Dᴇᴅᴜᴄᴛᴇᴅ
-💎 Cᴜʀʀᴇɴᴛ Bᴀʟᴀɴᴄᴇ: ${formatBalance(balance)}
-🔄 Tʀʏ Aɢᴀɪɴ!`,
+      const newBal = await loseGame(senderID, 50);
+      return api.sendMessage(
+        `❌ Wrong Answer!\n−50 $\n💳 Balance: ${formatBalance(newBal)}`,
         threadID
       );
     }
