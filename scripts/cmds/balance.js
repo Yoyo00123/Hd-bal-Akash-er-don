@@ -3,7 +3,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
-const API_URL = "https://balance-bot-api.onrender.com";
+const API_URL = "https://akash-balance-bot.vercel.app";
 
 // 🔹 Get balance from API
 async function getBalance(userID) {
