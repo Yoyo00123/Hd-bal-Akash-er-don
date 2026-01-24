@@ -1,15 +1,97 @@
-const axios = require("axios");
+const { MongoClient } = require('mongodb');
 
-const API_URL = "https://akash-balance-bot.vercel.app";
+// 🔥 MongoDB Connection String
+const MONGODB_URI = "mongodb+srv://akashbotdev_db_user:1uZAtAyVcXDV0tJc@balancebot.ihk6khc.mongodb.net/coinx?retryWrites=true&w=majority&appName=Balancebot";
+
+let db;
+let client;
+
+// 🔹 MongoDB কানেক্ট করো
+async function connectDB() {
+  try {
+    if (!client || !client.topology || !client.topology.isConnected()) {
+      client = new MongoClient(MONGODB_URI, {
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 45000,
+      });
+      await client.connect();
+      db = client.db('coinx');
+      console.log('✅ MongoDB Connected for Bet.js');
+    }
+    return true;
+  } catch (error) {
+    console.error('❌ MongoDB Connection Error:', error.message);
+    return false;
+  }
+}
+
+// 🔹 Get balance from MongoDB
+async function getBalance(userID) {
+  try {
+    if (!db) await connectDB();
+    
+    const user = await db.collection('balances').findOne({ userID: userID });
+    
+    if (user) {
+      return user.balance;
+    } else {
+      // Create new user with 100 balance
+      await db.collection('balances').insertOne({
+        userID: userID,
+        balance: 100,
+        createdAt: new Date()
+      });
+      return 100;
+    }
+  } catch (error) {
+    console.error('Get balance error:', error);
+    return 100; // Fallback
+  }
+}
+
+// 🔹 Update balance in MongoDB
+async function updateBalance(userID, changeAmount) {
+  try {
+    if (!db) await connectDB();
+    
+    const user = await db.collection('balances').findOne({ userID: userID });
+    const currentBalance = user ? user.balance : 100;
+    const newBalance = Math.max(0, currentBalance + changeAmount);
+    
+    await db.collection('balances').updateOne(
+      { userID: userID },
+      { 
+        $set: { 
+          balance: newBalance,
+          updatedAt: new Date() 
+        }
+      },
+      { upsert: true }
+    );
+    
+    return newBalance;
+  } catch (error) {
+    console.error('Update balance error:', error);
+    return null;
+  }
+}
+
+// 🔹 Format balance
+function formatBalance(num) {
+  if (num >= 1e9) return (num / 1e9).toFixed(2).replace(/\.00$/, "") + "B $";
+  if (num >= 1e6) return (num / 1e6).toFixed(2).replace(/\.00$/, "") + "M $";
+  if (num >= 1e3) return (num / 1e3).toFixed(2).replace(/\.00$/, "") + "K $";
+  return num + " $";
+}
 
 module.exports = {
   config: {
     name: "bet",
     aliases: ["spin", "gamble"],
-    version: "9.0",
+    version: "12.0",
     author: "MOHAMMAD AKASH",
     role: 0,
-    description: "Fixed bet game with proper balance updates",
+    description: "Bet game with Direct MongoDB",
     category: "economy",
     guide: {
       en: "{p}bet <amount>"
@@ -21,20 +103,23 @@ module.exports = {
     const betAmount = parseInt(args[0]);
     
     if (!betAmount || betAmount <= 0) {
-      return message.reply("❌ Usage: !bet <amount>\nExample: !bet 50");
+      return message.reply("🎰 Usage: !bet <amount>\nExample: !bet 50");
     }
 
     try {
-      console.log(`=== BET GAME START ===`);
+      console.log(`=== BET GAME START (MongoDB DIRECT) ===`);
       console.log(`User: ${senderID}, Bet: ${betAmount}`);
       
-      // ১. Get current balance
-      const balanceRes = await axios.get(`${API_URL}/api/balance/${senderID}`);
-      const currentBalance = balanceRes.data.balance || 100;
-      console.log(`Current Balance: ${currentBalance}`);
+      // ১. Get current balance from MongoDB
+      const currentBalance = await getBalance(senderID);
+      console.log(`Current Balance from MongoDB: ${currentBalance}`);
       
       if (currentBalance < betAmount) {
-        return message.reply(`❌ Insufficient balance!\n💰 You have: ${currentBalance} $\n🎯 Need: ${betAmount} $`);
+        return message.reply(
+          `❌ Insufficient balance!\n` +
+          `💰 You have: ${formatBalance(currentBalance)}\n` +
+          `🎯 Need: ${formatBalance(betAmount)}`
+        );
       }
 
       // ২. Calculate game result
@@ -59,7 +144,7 @@ module.exports = {
         messageText = "🎉 JACKPOT 10x!";
       }
       
-      console.log(`Random: ${rand}, Multiplier: ${multiplier}x`);
+      console.log(`Random: ${rand.toFixed(2)}, Multiplier: ${multiplier}x`);
       
       const totalWin = betAmount * multiplier;
       console.log(`Total Win: ${totalWin}`);
@@ -68,41 +153,25 @@ module.exports = {
       
       // ৩. Calculate net change
       if (multiplier === 0) {
-        // Lose: betAmount হারালেন
+        // Lose
         netChange = -betAmount;
-        console.log(`Net Change: -${betAmount} (Lost bet)`);
       } else if (multiplier === 1) {
-        // Break even: টাকা ফেরত
+        // Break even
         netChange = 0;
-        console.log(`Net Change: 0 (Break even)`);
       } else {
-        // Win: (win - bet) = নেট লাভ
+        // Win
         netChange = totalWin - betAmount;
-        console.log(`Net Change: +${netChange} (Won ${totalWin} - Bet ${betAmount})`);
       }
       
-      // ৪. Update balance DIRECTLY
-      let newBalance = currentBalance;
+      console.log(`Net Change: ${netChange}`);
       
-      if (netChange > 0) {
-        // Win money
-        console.log(`Adding ${netChange} to balance...`);
-        const addRes = await axios.post(`${API_URL}/api/balance/add`, {
-          userID: senderID,
-          amount: netChange
-        });
-        newBalance = addRes.data.balance || currentBalance + netChange;
-        console.log(`Add Response:`, addRes.data);
-        
-      } else if (netChange < 0) {
-        // Lose money
-        console.log(`Subtracting ${Math.abs(netChange)} from balance...`);
-        const subRes = await axios.post(`${API_URL}/api/balance/subtract`, {
-          userID: senderID,
-          amount: Math.abs(netChange)
-        });
-        newBalance = subRes.data.balance || currentBalance + netChange;
-        console.log(`Subtract Response:`, subRes.data);
+      // ৪. Update balance DIRECTLY in MongoDB
+      let newBalance = await updateBalance(senderID, netChange);
+      
+      if (newBalance === null) {
+        // Fallback calculation
+        newBalance = currentBalance + netChange;
+        console.log(`Using fallback balance: ${newBalance}`);
       }
       
       console.log(`Final Balance: ${newBalance}`);
@@ -110,19 +179,20 @@ module.exports = {
       // ৫. Send result
       const resultMessage = 
         `**${messageText}**\n\n` +
-        `🎰 **Bet:** ${betAmount} $\n` +
+        `🎰 **Bet:** ${formatBalance(betAmount)}\n` +
         `✨ **Multiplier:** ${multiplier}x\n` +
-        `💰 **Total Win:** ${totalWin} $\n` +
-        `📈 **Net Change:** ${netChange >= 0 ? '+' : ''}${netChange} $\n` +
-        `💵 **New Balance:** ${newBalance} $\n\n` +
-        `✅ **Balance successfully updated!**\n` +
-        `📊 Use \`!balance\` to see your updated bank card`;
+        `💰 **Total Win:** ${formatBalance(totalWin)}\n` +
+        `📈 **Net Change:** ${netChange >= 0 ? '+' : ''}${formatBalance(netChange)}\n` +
+        `💵 **New Balance:** ${formatBalance(newBalance)}\n\n` +
+        `✅ **Balance updated in MongoDB!**\n` +
+        `📊 Use \`!balance\` to see your updated bank card\n` +
+        `💾 **Database:** MongoDB Connected ✅`;
       
       await message.reply(resultMessage);
       console.log(`=== BET GAME END ===\n`);
       
     } catch (error) {
-      console.error("❌ Bet game error:", error.response?.data || error.message);
+      console.error("❌ Bet game error:", error.message);
       message.reply("❌ Game error. Please try again later.");
     }
   }
