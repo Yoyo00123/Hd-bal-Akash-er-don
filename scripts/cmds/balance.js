@@ -1,31 +1,136 @@
 const { createCanvas } = require('canvas');
-const axios = require('axios');
+const { MongoClient } = require('mongodb');
 const fs = require('fs');
 const path = require('path');
 
-const API_URL = "https://akash-balance-bot.vercel.app";
+// 🔥 MongoDB Connection String
+const MONGODB_URI = "mongodb+srv://akashbotdev_db_user:1uZAtAyVcXDV0tJc@balancebot.ihk6khc.mongodb.net/coinx?retryWrites=true&w=majority&appName=Balancebot";
 
-// 🔹 Get balance from API
+let db;
+let client;
+
+// 🔹 MongoDB কানেক্ট করো
+async function connectDB() {
+  try {
+    if (!client || !client.topology || !client.topology.isConnected()) {
+      client = new MongoClient(MONGODB_URI, {
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 45000,
+      });
+      await client.connect();
+      db = client.db('coinx');
+      console.log('✅ MongoDB Connected for Balance.js');
+    }
+    return true;
+  } catch (error) {
+    console.error('❌ MongoDB Connection Error:', error.message);
+    return false;
+  }
+}
+
+// 🔹 Get balance from MongoDB
 async function getBalance(userID) {
   try {
-    const res = await axios.get(`${API_URL}/api/balance/${userID}`, { timeout: 5000 });
-    return res.data.balance || 100;
-  } catch {
-    return 100;
+    if (!db) await connectDB();
+    
+    const user = await db.collection('balances').findOne({ userID: userID });
+    
+    if (user) {
+      return user.balance;
+    } else {
+      // Create new user with 100 balance
+      await db.collection('balances').insertOne({
+        userID: userID,
+        balance: 100,
+        createdAt: new Date()
+      });
+      return 100;
+    }
+  } catch (error) {
+    console.error('Get balance error:', error);
+    return 100; // Fallback
   }
 }
 
-// 🔹 Transfer balance between users
+// 🔹 Transfer balance in MongoDB
 async function transferBalance(senderID, receiverID, amount) {
   try {
-    const res = await axios.post(`${API_URL}/api/balance/transfer`, { senderID, receiverID, amount });
-    return res.data;
-  } catch {
-    return { success: false, message: "API connection failed." };
+    if (!db) await connectDB();
+    
+    const session = client.startSession();
+    
+    try {
+      session.startTransaction();
+      
+      // Get or create sender
+      let sender = await db.collection('balances').findOne({ userID: senderID }, { session });
+      if (!sender) {
+        await db.collection('balances').insertOne({
+          userID: senderID,
+          balance: 100,
+          createdAt: new Date()
+        }, { session });
+        sender = { balance: 100 };
+      }
+      
+      // Get or create receiver
+      let receiver = await db.collection('balances').findOne({ userID: receiverID }, { session });
+      if (!receiver) {
+        await db.collection('balances').insertOne({
+          userID: receiverID,
+          balance: 100,
+          createdAt: new Date()
+        }, { session });
+        receiver = { balance: 100 };
+      }
+      
+      if (sender.balance < amount) {
+        throw new Error('Insufficient balance');
+      }
+      
+      // Update sender
+      await db.collection('balances').updateOne(
+        { userID: senderID },
+        { $inc: { balance: -amount } },
+        { session }
+      );
+      
+      // Update receiver
+      await db.collection('balances').updateOne(
+        { userID: receiverID },
+        { $inc: { balance: amount } },
+        { session }
+      );
+      
+      await session.commitTransaction();
+      
+      // Get updated balances
+      const updatedSender = await db.collection('balances').findOne({ userID: senderID });
+      const updatedReceiver = await db.collection('balances').findOne({ userID: receiverID });
+      
+      return {
+        success: true,
+        senderBalance: updatedSender.balance,
+        receiverBalance: updatedReceiver.balance
+      };
+      
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+    
+  } catch (error) {
+    console.error('Transfer error:', error.message);
+    return { 
+      success: false, 
+      message: error.message || 'Transfer failed' 
+    };
   }
 }
 
-// 🔹 Format balance compactly
+// 🔹 Format balance
 function formatBalance(num) {
   if (num >= 1e9) return (num / 1e9).toFixed(2).replace(/\.00$/, "") + "B $";
   if (num >= 1e6) return (num / 1e6).toFixed(2).replace(/\.00$/, "") + "M $";
@@ -33,7 +138,7 @@ function formatBalance(num) {
   return num + " $";
 }
 
-// 🔹 Get card type based on balance
+// 🔹 Get card type
 function getCardType(balance) {
   if (balance >= 1000000) return { type: "SAPPHIRE", color: "#0F52BA", level: 7 };
   if (balance >= 250000) return { type: "GOLD", color: "#FFD700", level: 6 };
@@ -46,12 +151,12 @@ function getCardType(balance) {
 module.exports.config = {
   name: "balance",
   aliases: ["bal", "bank"],
-  version: "12.1",
+  version: "15.0",
   author: "MOHAMMAD AKASH",
   countDown: 5,
   role: 0,
-  shortDescription: "Bank Card",
-  longDescription: "Check balance with bank card",
+  shortDescription: "Bank Card with MongoDB",
+  longDescription: "Check balance with bank card - Direct MongoDB",
   category: "economy",
   guide: { en: "{p}balance | {p}balance transfer @user <amount>" }
 };
@@ -66,21 +171,38 @@ module.exports.onStart = async function ({ api, event, args, usersData }) {
     }
     const targetID = Object.keys(mentions)[0];
     const amount = parseFloat(args[1]);
-    if (isNaN(amount) || amount <= 0) return api.sendMessage("❌ Invalid amount.", threadID, messageID);
-    if (targetID === senderID) return api.sendMessage("❌ You can't transfer to yourself.", threadID, messageID);
+    
+    if (isNaN(amount) || amount <= 0) {
+      return api.sendMessage("❌ Invalid amount.", threadID, messageID);
+    }
+    
+    if (targetID === senderID) {
+      return api.sendMessage("❌ You can't transfer to yourself.", threadID, messageID);
+    }
 
     const transferResult = await transferBalance(senderID, targetID, amount);
-    if (!transferResult.success) return api.sendMessage(`❌ ${transferResult.message}`, threadID, messageID);
+    
+    if (!transferResult.success) {
+      return api.sendMessage(`❌ ${transferResult.message}`, threadID, messageID);
+    }
 
     const senderName = await usersData.getName(senderID);
     const receiverName = await usersData.getName(targetID);
+    
     return api.sendMessage(
-      `✅ Transfer Complete\nFrom: ${senderName}\nTo: ${receiverName}\nAmount: ${formatBalance(amount)}\nNew Balance: ${formatBalance(transferResult.senderBalance)}`,
+      `✅ **Transfer Complete**\n\n` +
+      `👤 From: ${senderName}\n` +
+      `👥 To: ${receiverName}\n` +
+      `💰 Amount: ${formatBalance(amount)}\n` +
+      `📊 Your New Balance: ${formatBalance(transferResult.senderBalance)}\n` +
+      `📈 Their New Balance: ${formatBalance(transferResult.receiverBalance)}\n\n` +
+      `💾 **Database:** MongoDB Connected`,
       threadID, messageID
     );
   }
 
   try {
+    // Get balance from MongoDB
     const balance = await getBalance(senderID);
     const userName = await usersData.getName(senderID);
     const cardInfo = getCardType(balance);
@@ -181,40 +303,21 @@ module.exports.onStart = async function ({ api, event, args, usersData }) {
     ctx.fillStyle = '#FFFFFF';
     ctx.fillText('CARD RANK SYSTEM:', 60, 460);
 
-    const ranks = ["STANDARD", "CLASSIC", "PLATINUM", "SILVER", "GOLD"];
+    const ranks = ["STANDARD", "CLASSIC", "PLATINUM", "SILVER", "GOLD", "SAPPHIRE"];
     let rankX = 60;
     const rankY = 500;
-    ctx.font = 'bold 20px Arial';
+    ctx.font = 'bold 18px Arial';
     for (let i = 0; i < ranks.length; i++) {
       const rank = ranks[i];
-      ctx.fillStyle = (cardInfo.type === rank) ? '#00FF00' : '#888888';
+      ctx.fillStyle = (cardInfo.type === rank) ? '#00FF00' : '#666666';
       ctx.fillText(rank, rankX, rankY);
-      rankX += 140;
+      rankX += 100;
     }
 
-    // Payment Logos
-    ctx.fillStyle = '#1a1f71';
-    ctx.fillRect(width - 250, 380, 100, 40);
-    ctx.font = 'bold 30px Arial';
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillText('VISA', width - 230, 410);
-
-    // MasterCard Logo
-    ctx.fillStyle = '#EB001B';
-    ctx.beginPath();
-    ctx.arc(width - 100, 400, 18, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#F79E1B';
-    ctx.beginPath();
-    ctx.arc(width - 75, 400, 18, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Contactless
-    ctx.strokeStyle = '#4A90E2';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(180, 405, 10, -Math.PI / 4, Math.PI / 4);
-    ctx.stroke();
+    // Database info
+    ctx.font = 'bold 16px Arial';
+    ctx.fillStyle = '#00FF00';
+    ctx.fillText(`✅ MONGODB CONNECTED | Balance: ${balanceText}`, 60, 550);
 
     // Save and send
     const cacheDir = path.join(__dirname, 'cache');
@@ -222,8 +325,15 @@ module.exports.onStart = async function ({ api, event, args, usersData }) {
     const filePath = path.join(cacheDir, `card_${senderID}.png`);
     fs.writeFileSync(filePath, canvas.toBuffer('image/png'));
 
-    await api.sendMessage({ attachment: fs.createReadStream(filePath) }, threadID, messageID);
-    setTimeout(() => { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); }, 10000);
+    await api.sendMessage({
+      body: `🏦 **GLOBAL BANK**\n👤 ${userName}\n💰 Balance: ${formatBalance(balance)}\n📊 Card: ${cardInfo.type}\n💾 Database: MongoDB Connected ✅`,
+      attachment: fs.createReadStream(filePath)
+    }, threadID, messageID);
+    
+    setTimeout(() => { 
+      try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } 
+      catch (e) {} 
+    }, 30000);
 
   } catch (err) {
     console.error(err);
