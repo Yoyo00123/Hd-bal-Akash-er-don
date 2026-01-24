@@ -1,171 +1,87 @@
 const axios = require("axios");
 
-// API URL
 const API_URL = "https://akash-balance-bot.vercel.app";
-
-// 🔹 Get balance - FIXED
-async function getBalance(userID) {
-  try {
-    const res = await axios.get(`${API_URL}/api/balance/${userID}`, { timeout: 10000 });
-    console.log("Get Balance Response:", res.data);
-    return res.data.balance || 100;
-  } catch (error) {
-    console.error("Get Balance Error:", error.message);
-    return 100;
-  }
-}
-
-// 🔹 Win balance - FIXED
-async function winGame(userID, amount) {
-  try {
-    console.log(`Winning ${amount} for ${userID}`);
-    const res = await axios.post(`${API_URL}/api/balance/win`, { 
-      userID: userID,
-      amount: amount 
-    }, { timeout: 10000 });
-    
-    console.log("Win Game Response:", res.data);
-    
-    if (res.data.success) {
-      return res.data.balance;
-    } else {
-      console.error("Win failed:", res.data.message);
-      return null;
-    }
-  } catch (error) {
-    console.error("Win Game API Error:", {
-      message: error.message,
-      response: error.response?.data,
-      status: error.response?.status
-    });
-    return null;
-  }
-}
-
-// 🔹 Lose balance - FIXED
-async function loseGame(userID, amount) {
-  try {
-    console.log(`Losing ${amount} for ${userID}`);
-    const res = await axios.post(`${API_URL}/api/balance/lose`, { 
-      userID: userID,
-      amount: amount 
-    }, { timeout: 10000 });
-    
-    console.log("Lose Game Response:", res.data);
-    
-    if (res.data.success) {
-      return res.data.balance;
-    } else {
-      console.error("Lose failed:", res.data.message);
-      return null;
-    }
-  } catch (error) {
-    console.error("Lose Game API Error:", {
-      message: error.message,
-      response: error.response?.data,
-      status: error.response?.status
-    });
-    return null;
-  }
-}
-
-// 🔹 Format balance
-function formatBalance(num) {
-  if (num >= 1e9) return (num / 1e9).toFixed(2).replace(/\.00$/, "") + "B $";
-  if (num >= 1e6) return (num / 1e6).toFixed(2).replace(/\.00$/, "") + "M $";
-  if (num >= 1e3) return (num / 1e3).toFixed(2).replace(/\.00$/, "") + "K $";
-  return num + " $";
-}
 
 module.exports = {
   config: {
     name: "bet",
-    aliases: ["spin", "gamble"],
-    version: "5.0",
+    aliases: ["spin"],
+    version: "8.0",
     author: "MOHAMMAD AKASH",
-    countDown: 5,
     role: 0,
-    description: "Bet and win/loss money",
+    description: "Working bet game",
     category: "economy",
-    guide: {
-      en: "{p}bet <amount>"
-    }
+    guide: { en: "{p}bet <amount>" }
   },
 
   onStart: async function ({ message, event, args }) {
     const senderID = event.senderID;
-    
-    // ✅ /bet <amount>
     const betAmount = parseInt(args[0]);
     
-    if (isNaN(betAmount) || betAmount <= 0) {
-      return message.reply("❌ Usage: /bet <amount>\nExample: /bet 100");
+    if (!betAmount || betAmount <= 0) {
+      return message.reply("❌ Use: !bet 50");
     }
 
-    // Check balance first
-    const currentBalance = await getBalance(senderID);
-    console.log(`Current balance for ${senderID}: ${currentBalance}`);
-    
-    if (currentBalance < betAmount) {
-      return message.reply(`❌ Not enough money.\n💰 Your balance: ${formatBalance(currentBalance)} $`);
-    }
-
-    // Deduct bet first
-    console.log("Deducting bet amount...");
-    const afterBetBalance = await loseGame(senderID, betAmount);
-    
-    if (afterBetBalance === null) {
-      return message.reply("❌ Failed to place bet. Try again.");
-    }
-    
-    console.log(`After bet balance: ${afterBetBalance}`);
-
-    // Outcomes with multipliers
-    const outcomes = [
-      { text: "💥 You lost everything!", multiplier: 0, chance: 0.3 },   // 30%
-      { text: "😞 You got back half.", multiplier: 0.5, chance: 0.2 },   // 20%
-      { text: "🟡 You broke even.", multiplier: 1, chance: 0.2 },        // 20%
-      { text: "🟢 You doubled your money!", multiplier: 2, chance: 0.15 }, // 15%
-      { text: "🔥 You tripled your bet!", multiplier: 3, chance: 0.1 },   // 10%
-      { text: "🎉 JACKPOT! 10x reward!", multiplier: 10, chance: 0.05 }  // 5%
-    ];
-
-    // Calculate outcome based on chance
-    const random = Math.random();
-    let cumulativeChance = 0;
-    let outcome = outcomes[0]; // Default
-    
-    for (const possibleOutcome of outcomes) {
-      cumulativeChance += possibleOutcome.chance;
-      if (random <= cumulativeChance) {
-        outcome = possibleOutcome;
-        break;
-      }
-    }
-
-    const reward = Math.floor(betAmount * outcome.multiplier);
-    let newBalance = afterBetBalance;
-    
-    // Add winnings if any
-    if (reward > 0) {
-      console.log(`Adding reward: ${reward}`);
-      newBalance = await winGame(senderID, reward);
+    try {
+      // ১. Check balance
+      const balanceRes = await axios.get(`${API_URL}/api/balance/${senderID}`);
+      const currentBalance = balanceRes.data.balance || 100;
       
-      if (newBalance === null) {
-        // Fallback: manually calculate
-        newBalance = afterBetBalance + reward;
-        console.log(`Using fallback balance: ${newBalance}`);
+      if (currentBalance < betAmount) {
+        return message.reply(`❌ Not enough! Balance: ${currentBalance}`);
       }
-    }
-    
-    console.log(`Final balance: ${newBalance}`);
 
-    // Send result
-    return message.reply(
-      `${outcome.text}\n` +
-      `🎰 You bet: ${formatBalance(betAmount)}\n` +
-      `💸 You won: ${formatBalance(reward)}\n` +
-      `💰 New balance: ${formatBalance(newBalance)}`
-    );
+      // ২. Game result
+      const rand = Math.random();
+      let multiplier = 0;
+      let messageText = "💥 Lost!";
+      
+      if (rand < 0.4) multiplier = 0;      // 40% lose
+      else if (rand < 0.6) multiplier = 1;  // 20% break even
+      else if (rand < 0.8) multiplier = 2;  // 20% 2x
+      else if (rand < 0.95) multiplier = 3; // 15% 3x
+      else multiplier = 10;                // 5% 10x
+      
+      if (multiplier === 1) messageText = "🟡 Break even!";
+      if (multiplier === 2) messageText = "🟢 2x Win!";
+      if (multiplier === 3) messageText = "🔥 3x Win!";
+      if (multiplier === 10) messageText = "🎉 JACKPOT 10x!";
+
+      const winAmount = betAmount * multiplier;
+      
+      // ৩. Update balance based on result
+      if (multiplier === 0) {
+        // Just subtract bet amount
+        await axios.post(`${API_URL}/api/balance/subtract`, {
+          userID: senderID,
+          amount: betAmount
+        });
+      } else if (multiplier === 1) {
+        // Break even - no change needed
+      } else {
+        // Win - subtract bet, add winnings
+        await axios.post(`${API_URL}/api/balance/add`, {
+          userID: senderID,
+          amount: winAmount - betAmount
+        });
+      }
+
+      // ৪. Get updated balance
+      const updatedRes = await axios.get(`${API_URL}/api/balance/${senderID}`);
+      const newBalance = updatedRes.data.balance || currentBalance;
+      
+      // ৫. Send result
+      message.reply(
+        `${messageText}\n\n` +
+        `🎰 Bet: ${betAmount} $\n` +
+        `💰 Result: ${multiplier === 0 ? "Lost " + betAmount : "Won " + winAmount} $\n` +
+        `💵 Balance: ${newBalance} $\n\n` +
+        `✅ Balance updated!`
+      );
+      
+    } catch (error) {
+      console.error("Bet error:", error);
+      message.reply("❌ Game error. Try again.");
+    }
   }
 };
