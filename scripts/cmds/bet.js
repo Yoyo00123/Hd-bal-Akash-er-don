@@ -2,55 +2,14 @@ const axios = require("axios");
 
 const API_URL = "https://akash-balance-bot.vercel.app";
 
-// 🔹 Get balance
-async function getBalance(userID) {
-  try {
-    const res = await axios.get(`${API_URL}/api/balance/${userID}`);
-    return res.data.balance || 100;
-  } catch (error) {
-    console.error("Balance Error:", error.message);
-    return 100;
-  }
-}
-
-// 🔹 Add balance (use ADD endpoint instead of WIN)
-async function addBalance(userID, amount) {
-  try {
-    const res = await axios.post(`${API_URL}/api/balance/add`, {
-      userID: userID,
-      amount: amount
-    });
-    console.log("Add Balance Response:", res.data);
-    return res.data.balance;
-  } catch (error) {
-    console.error("Add Error:", error.message);
-    return null;
-  }
-}
-
-// 🔹 Subtract balance (use SUBTRACT endpoint instead of LOSE)
-async function subtractBalance(userID, amount) {
-  try {
-    const res = await axios.post(`${API_URL}/api/balance/subtract`, {
-      userID: userID,
-      amount: amount
-    });
-    console.log("Subtract Balance Response:", res.data);
-    return res.data.balance;
-  } catch (error) {
-    console.error("Subtract Error:", error.message);
-    return null;
-  }
-}
-
 module.exports = {
   config: {
     name: "bet",
     aliases: ["spin", "gamble"],
-    version: "7.0",
+    version: "9.0",
     author: "MOHAMMAD AKASH",
     role: 0,
-    description: "Bet game using ADD/SUBTRACT endpoints",
+    description: "Fixed bet game with proper balance updates",
     category: "economy",
     guide: {
       en: "{p}bet <amount>"
@@ -62,66 +21,109 @@ module.exports = {
     const betAmount = parseInt(args[0]);
     
     if (!betAmount || betAmount <= 0) {
-      return message.reply("🎰 Usage: !bet <amount>\nExample: !bet 50");
+      return message.reply("❌ Usage: !bet <amount>\nExample: !bet 50");
     }
 
-    // ১. Check current balance
-    const currentBalance = await getBalance(senderID);
-    
-    if (currentBalance < betAmount) {
-      return message.reply(`❌ Not enough money!\n💰 Your balance: ${currentBalance} $\n🎯 Required: ${betAmount} $`);
-    }
-
-    // ২. Subtract bet amount
-    const afterBetBalance = await subtractBalance(senderID, betAmount);
-    
-    if (afterBetBalance === null) {
-      return message.reply("❌ Failed to place bet. Try again.");
-    }
-
-    // ৩. Game logic
-    const outcomes = [
-      { text: "💥 You lost!", multiplier: 0, chance: 0.4 },      // 40%
-      { text: "🟡 Break even!", multiplier: 1, chance: 0.2 },    // 20%
-      { text: "🟢 2x Win!", multiplier: 2, chance: 0.2 },        // 20%
-      { text: "🔥 3x Win!", multiplier: 3, chance: 0.15 },       // 15%
-      { text: "🎉 10x JACKPOT!", multiplier: 10, chance: 0.05 }  // 5%
-    ];
-
-    const random = Math.random();
-    let cumulative = 0;
-    let outcome = outcomes[0];
-    
-    for (const opt of outcomes) {
-      cumulative += opt.chance;
-      if (random <= cumulative) {
-        outcome = opt;
-        break;
-      }
-    }
-
-    const winAmount = Math.floor(betAmount * outcome.multiplier);
-    let finalBalance = afterBetBalance;
-    
-    // ৪. Add winnings if won
-    if (winAmount > 0) {
-      finalBalance = await addBalance(senderID, winAmount);
-      if (finalBalance === null) {
-        finalBalance = afterBetBalance + winAmount;
-      }
-    }
-
-    // ৫. Send result
-    const resultMsg = 
-      `${outcome.text}\n\n` +
-      `🎰 Bet: ${betAmount} $\n` +
-      `💰 Won: ${winAmount} $\n` +
-      `💵 New Balance: ${finalBalance} $\n\n`;
+    try {
+      console.log(`=== BET GAME START ===`);
+      console.log(`User: ${senderID}, Bet: ${betAmount}`);
       
-    if (winAmount > 0) {
-      message.reply(resultMsg + `✅ Balance updated successfully!`);
-    } else {
-      message.reply(resultMsg + `🔄 Use !balance to check your updated balance`);
+      // ১. Get current balance
+      const balanceRes = await axios.get(`${API_URL}/api/balance/${senderID}`);
+      const currentBalance = balanceRes.data.balance || 100;
+      console.log(`Current Balance: ${currentBalance}`);
+      
+      if (currentBalance < betAmount) {
+        return message.reply(`❌ Insufficient balance!\n💰 You have: ${currentBalance} $\n🎯 Need: ${betAmount} $`);
+      }
+
+      // ২. Calculate game result
+      const rand = Math.random();
+      let multiplier = 0;
+      let messageText = "";
+      
+      if (rand < 0.40) {
+        multiplier = 0;
+        messageText = "💥 Lost!";
+      } else if (rand < 0.60) {
+        multiplier = 1;
+        messageText = "🟡 Break even!";
+      } else if (rand < 0.80) {
+        multiplier = 2;
+        messageText = "🟢 2x Win!";
+      } else if (rand < 0.95) {
+        multiplier = 3;
+        messageText = "🔥 3x Win!";
+      } else {
+        multiplier = 10;
+        messageText = "🎉 JACKPOT 10x!";
+      }
+      
+      console.log(`Random: ${rand}, Multiplier: ${multiplier}x`);
+      
+      const totalWin = betAmount * multiplier;
+      console.log(`Total Win: ${totalWin}`);
+      
+      let netChange = 0;
+      
+      // ৩. Calculate net change
+      if (multiplier === 0) {
+        // Lose: betAmount হারালেন
+        netChange = -betAmount;
+        console.log(`Net Change: -${betAmount} (Lost bet)`);
+      } else if (multiplier === 1) {
+        // Break even: টাকা ফেরত
+        netChange = 0;
+        console.log(`Net Change: 0 (Break even)`);
+      } else {
+        // Win: (win - bet) = নেট লাভ
+        netChange = totalWin - betAmount;
+        console.log(`Net Change: +${netChange} (Won ${totalWin} - Bet ${betAmount})`);
+      }
+      
+      // ৪. Update balance DIRECTLY
+      let newBalance = currentBalance;
+      
+      if (netChange > 0) {
+        // Win money
+        console.log(`Adding ${netChange} to balance...`);
+        const addRes = await axios.post(`${API_URL}/api/balance/add`, {
+          userID: senderID,
+          amount: netChange
+        });
+        newBalance = addRes.data.balance || currentBalance + netChange;
+        console.log(`Add Response:`, addRes.data);
+        
+      } else if (netChange < 0) {
+        // Lose money
+        console.log(`Subtracting ${Math.abs(netChange)} from balance...`);
+        const subRes = await axios.post(`${API_URL}/api/balance/subtract`, {
+          userID: senderID,
+          amount: Math.abs(netChange)
+        });
+        newBalance = subRes.data.balance || currentBalance + netChange;
+        console.log(`Subtract Response:`, subRes.data);
+      }
+      
+      console.log(`Final Balance: ${newBalance}`);
+      
+      // ৫. Send result
+      const resultMessage = 
+        `**${messageText}**\n\n` +
+        `🎰 **Bet:** ${betAmount} $\n` +
+        `✨ **Multiplier:** ${multiplier}x\n` +
+        `💰 **Total Win:** ${totalWin} $\n` +
+        `📈 **Net Change:** ${netChange >= 0 ? '+' : ''}${netChange} $\n` +
+        `💵 **New Balance:** ${newBalance} $\n\n` +
+        `✅ **Balance successfully updated!**\n` +
+        `📊 Use \`!balance\` to see your updated bank card`;
+      
+      await message.reply(resultMessage);
+      console.log(`=== BET GAME END ===\n`);
+      
+    } catch (error) {
+      console.error("❌ Bet game error:", error.response?.data || error.message);
+      message.reply("❌ Game error. Please try again later.");
     }
   }
 };
