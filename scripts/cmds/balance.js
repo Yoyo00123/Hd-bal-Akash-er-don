@@ -15,13 +15,28 @@ async function getBalance(userID) {
   }
 }
 
-// 🔹 Transfer balance between users
+// 🔹 Transfer balance between users - FIXED!
 async function transferBalance(senderID, receiverID, amount) {
   try {
-    const res = await axios.post(`${API_URL}/api/balance/transfer`, { senderID, receiverID, amount });
-    return res.data;
-  } catch {
-    return { success: false, message: "API connection failed." };
+    const res = await axios.post(`${API_URL}/api/balance/transfer`, { 
+      fromId: senderID,    // ✅ Correct parameter
+      toId: receiverID,    // ✅ Correct parameter  
+      amount: amount 
+    }, { timeout: 5000 });
+    
+    return {
+      success: true,
+      message: "Transfer successful",
+      senderBalance: res.data.senderBalance || 100,
+      receiverBalance: res.data.receiverBalance || 100
+    };
+    
+  } catch (error) {
+    console.error("Transfer error:", error.response?.data || error.message);
+    return { 
+      success: false, 
+      message: error.response?.data?.error || "API connection failed." 
+    };
   }
 }
 
@@ -66,20 +81,47 @@ module.exports.onStart = async function ({ api, event, args, usersData }) {
     }
     const targetID = Object.keys(mentions)[0];
     const amount = parseFloat(args[1]);
-    if (isNaN(amount) || amount <= 0) return api.sendMessage("❌ Invalid amount.", threadID, messageID);
-    if (targetID === senderID) return api.sendMessage("❌ You can't transfer to yourself.", threadID, messageID);
+    
+    if (isNaN(amount) || amount <= 0) {
+      return api.sendMessage("❌ Invalid amount. Please enter a valid number.", threadID, messageID);
+    }
+    
+    if (targetID === senderID) {
+      return api.sendMessage("❌ You can't transfer to yourself.", threadID, messageID);
+    }
+
+    // Check sender's balance first
+    const senderBalance = await getBalance(senderID);
+    if (senderBalance < amount) {
+      return api.sendMessage(
+        `❌ Insufficient balance!\nYour balance: ${formatBalance(senderBalance)}\nRequired: ${formatBalance(amount)}`,
+        threadID, 
+        messageID
+      );
+    }
 
     const transferResult = await transferBalance(senderID, targetID, amount);
-    if (!transferResult.success) return api.sendMessage(`❌ ${transferResult.message}`, threadID, messageID);
+    
+    if (!transferResult.success) {
+      return api.sendMessage(`❌ Transfer failed: ${transferResult.message}`, threadID, messageID);
+    }
 
     const senderName = await usersData.getName(senderID);
     const receiverName = await usersData.getName(targetID);
+    
     return api.sendMessage(
-      `✅ Transfer Complete\nFrom: ${senderName}\nTo: ${receiverName}\nAmount: ${formatBalance(amount)}\nNew Balance: ${formatBalance(transferResult.senderBalance)}`,
-      threadID, messageID
+      `✅ **Transfer Complete**\n\n` +
+      `👤 From: ${senderName}\n` +
+      `👥 To: ${receiverName}\n` +
+      `💰 Amount: ${formatBalance(amount)}\n` +
+      `📊 Your New Balance: ${formatBalance(transferResult.senderBalance)}\n` +
+      `📈 Their New Balance: ${formatBalance(transferResult.receiverBalance)}`,
+      threadID, 
+      messageID
     );
   }
 
+  // 🎨 Generate Balance Card
   try {
     const balance = await getBalance(senderID);
     const userName = await usersData.getName(senderID);
@@ -181,16 +223,21 @@ module.exports.onStart = async function ({ api, event, args, usersData }) {
     ctx.fillStyle = '#FFFFFF';
     ctx.fillText('CARD RANK SYSTEM:', 60, 460);
 
-    const ranks = ["STANDARD", "CLASSIC", "PLATINUM", "SILVER", "GOLD"];
+    const ranks = ["STANDARD", "CLASSIC", "PLATINUM", "SILVER", "GOLD", "SAPPHIRE"];
     let rankX = 60;
     const rankY = 500;
-    ctx.font = 'bold 20px Arial';
+    ctx.font = 'bold 18px Arial';
     for (let i = 0; i < ranks.length; i++) {
       const rank = ranks[i];
-      ctx.fillStyle = (cardInfo.type === rank) ? '#00FF00' : '#888888';
+      ctx.fillStyle = (cardInfo.type === rank) ? '#00FF00' : '#666666';
       ctx.fillText(rank, rankX, rankY);
-      rankX += 140;
+      rankX += 120;
     }
+
+    // Current Rank Highlight
+    ctx.fillStyle = 'rgba(0, 255, 0, 0.1)';
+    const rankIndex = ranks.indexOf(cardInfo.type);
+    roundRect(ctx, 60 + (rankIndex * 120) - 5, 480, 110, 30, 5, true);
 
     // Payment Logos
     ctx.fillStyle = '#1a1f71';
@@ -216,18 +263,41 @@ module.exports.onStart = async function ({ api, event, args, usersData }) {
     ctx.arc(180, 405, 10, -Math.PI / 4, Math.PI / 4);
     ctx.stroke();
 
+    // User ID & Level
+    ctx.font = '14px Arial';
+    ctx.fillStyle = '#888888';
+    ctx.fillText(`ID: ${senderID} | Level: ${cardInfo.level}`, 60, 550);
+
     // Save and send
     const cacheDir = path.join(__dirname, 'cache');
-    if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-    const filePath = path.join(cacheDir, `card_${senderID}.png`);
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
+    
+    const filePath = path.join(cacheDir, `card_${senderID}_${Date.now()}.png`);
     fs.writeFileSync(filePath, canvas.toBuffer('image/png'));
 
-    await api.sendMessage({ attachment: fs.createReadStream(filePath) }, threadID, messageID);
-    setTimeout(() => { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); }, 10000);
+    await api.sendMessage({
+      body: `🏦 **GLOBAL BANK**\n👤 ${userName}\n💰 Balance: ${formatBalance(balance)}\n📊 Card: ${cardInfo.type} (Level ${cardInfo.level})`,
+      attachment: fs.createReadStream(filePath)
+    }, threadID, messageID);
+    
+    // Clean up after 30 seconds
+    setTimeout(() => {
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch (e) {}
+    }, 30000);
 
   } catch (err) {
-    console.error(err);
-    api.sendMessage("❌ Error generating card.", threadID, messageID);
+    console.error("Card generation error:", err);
+    api.sendMessage(
+      `❌ Error generating card. Using text mode.\n💰 Your balance: ${formatBalance(await getBalance(senderID))}`,
+      threadID, 
+      messageID
+    );
   }
 };
 
