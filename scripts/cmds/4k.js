@@ -60,7 +60,7 @@ module.exports = {
       const processTime = ((Date.now() - startTime) / 1000).toFixed(2);
 
       message.reply({
-        body: `✅ | 𝐇𝐞𝐫𝐞'𝐬 𝐲𝐨𝐮𝐫 𝟒𝐤 𝐢𝐦𝐚𝐠𝐞 𝐛𝐚𝐛𝐲`,
+        body: `✅ | 𝐇𝐞𝐫𝐞'𝐬 𝐲𝐨𝐮𝐫 𝟒𝐤 𝐢𝐦𝐚𝐠𝐞`,
         attachment: res.data
       });
 
