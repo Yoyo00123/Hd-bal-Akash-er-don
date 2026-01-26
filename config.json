@@ -12,15 +12,15 @@
   "antiInbox": false,
   "language": "en",
   "notesLanguage": "change language using ISO 639-1 code",
-  "nickNameBot": "⏤꯭֯🎀⃪꯭̽ᷝYOUR BABY🩷🕊️",
-  "prefix": "/",
+  "nickNameBot": "⏤꯭֯gey",
+  "prefix": "👅",
   "adminOnly": {
     "enable": false,
     "ignoreCommand": []
   },
   "adminBot": [
-    "100078049308655",
-    "55297214737376"
+    "61586571058647",
+    ""
   ],
   "reactUnsend": {
     "enable": true,
@@ -31,8 +31,8 @@
   "whiteListMode": {
     "enable": false,
     "whiteListIds": [
-      "100083039411474",
-      "100063840894133"
+      "",
+      ""
     ],
     "notes": "If enabled, only IDs in whiteListIds can use the bot."
   },
